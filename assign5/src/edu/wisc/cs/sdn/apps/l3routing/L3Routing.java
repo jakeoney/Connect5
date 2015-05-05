@@ -7,11 +7,17 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+import org.openflow.protocol.OFFlowMod;
+import org.openflow.protocol.OFMatch;
+import org.openflow.protocol.action.OFAction;
+import org.openflow.protocol.action.OFActionOutput;
+import org.openflow.protocol.instruction.OFInstruction;
+import org.openflow.protocol.instruction.OFInstructionApplyActions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import edu.wisc.cs.sdn.apps.util.Host;
-
+import edu.wisc.cs.sdn.apps.util.SwitchCommands;
 import net.floodlightcontroller.core.IFloodlightProviderService;
 import net.floodlightcontroller.core.IOFSwitch;
 import net.floodlightcontroller.core.IOFSwitch.PortChangeType;
@@ -46,7 +52,7 @@ public class L3Routing implements IFloodlightModule, IOFSwitchListener,
     private IDeviceService deviceProv;
     
     // Switch table in which rules should be installed
-    private byte table;
+    public static byte table;
     
     // Map of hosts to devices
     private Map<IDevice,Host> knownHosts;
@@ -60,7 +66,7 @@ public class L3Routing implements IFloodlightModule, IOFSwitchListener,
 	{
 		log.info(String.format("Initializing %s...", MODULE_NAME));
 		Map<String,String> config = context.getConfigParams(this);
-        this.table = Byte.parseByte(config.get("table"));
+        table = Byte.parseByte(config.get("table"));
         
 		this.floodlightProv = context.getServiceImpl(
 				IFloodlightProviderService.class);
@@ -125,6 +131,34 @@ public class L3Routing implements IFloodlightModule, IOFSwitchListener,
 			/* TODO: Update routing: add rules to route to new host          */
 			
 			/*****************************************************************/
+			if(host.isAttachedToSwitch()){
+				IOFSwitch sw = host.getSwitch();
+				
+				//setting match criteria
+				OFMatch matchCriteria = new OFMatch();
+				matchCriteria.setDataLayerType(OFMatch.ETH_TYPE_IPV4);
+				matchCriteria.setNetworkDestination(host.getIPv4Address());
+				
+				//creating actions for what to do
+				List<OFAction> actions = new ArrayList<OFAction>();
+				OFActionOutput action = new OFActionOutput(host.getPort());
+				actions.add(action);
+				List<OFInstruction > instructions = new ArrayList<OFInstruction>();
+				OFInstructionApplyActions instruction = new OFInstructionApplyActions(actions);
+				instructions.add(instruction);
+				
+				int bufferId = action.getMaxLength();
+				
+				SwitchCommands.installRule(sw, table, SwitchCommands.DEFAULT_PRIORITY, matchCriteria, instructions,
+						SwitchCommands.NO_TIMEOUT, SwitchCommands.NO_TIMEOUT, bufferId);
+			}
+			/*Collection<Host> tmp = this.getHosts();
+			for(Host i : tmp){
+				log.info(String.format("Host name is... %s", i.getName()));
+				if(i.isAttachedToSwitch()){
+					log.info(String.format("Attached to switch... %s", i.getSwitch().getStringId()));
+				}
+			}*/
 		}
 	}
 
