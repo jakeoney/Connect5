@@ -5,6 +5,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.openflow.protocol.OFFlowMod;
@@ -131,35 +132,47 @@ public class L3Routing implements IFloodlightModule, IOFSwitchListener,
 			/* TODO: Update routing: add rules to route to new host          */
 			
 			/*****************************************************************/
+			IOFSwitch sw = null;
+			List<OFInstruction> instructions = null;
+			OFInstructionApplyActions instruction = null;
+			int bufferId = 0;
 			if(host.isAttachedToSwitch()){
-				IOFSwitch sw = host.getSwitch();
-				
+				sw = host.getSwitch();
 				//setting match criteria
 				OFMatch matchCriteria = new OFMatch();
 				matchCriteria.setDataLayerType(OFMatch.ETH_TYPE_IPV4);
 				matchCriteria.setNetworkDestination(host.getIPv4Address());
-				
+
 				//creating actions for what to do
 				List<OFAction> actions = new ArrayList<OFAction>();
-				OFActionOutput action = new OFActionOutput(host.getPort());
-				actions.add(action);
-				List<OFInstruction > instructions = new ArrayList<OFInstruction>();
-				OFInstructionApplyActions instruction = new OFInstructionApplyActions(actions);
-				instructions.add(instruction);
-				
-				int bufferId = action.getMaxLength();
-				
-				SwitchCommands.installRule(sw, table, SwitchCommands.DEFAULT_PRIORITY, matchCriteria, instructions,
-						SwitchCommands.NO_TIMEOUT, SwitchCommands.NO_TIMEOUT, bufferId);
-			}
-			/*Collection<Host> tmp = this.getHosts();
-			for(Host i : tmp){
-				log.info(String.format("Host name is... %s", i.getName()));
-				if(i.isAttachedToSwitch()){
-					log.info(String.format("Attached to switch... %s", i.getSwitch().getStringId()));
+				OFActionOutput action;;
+
+				//maybe sw.getTables()?
+				//SwitchCommands.installRule(sw, table, SwitchCommands.DEFAULT_PRIORITY, matchCriteria, instructions,
+				//		SwitchCommands.NO_TIMEOUT, SwitchCommands.NO_TIMEOUT, bufferId);
+				for(Entry<Long, IOFSwitch> s : this.getSwitches().entrySet()){
+					if(!(s.getValue().equals(sw))){
+						action = computeBellmanFord();
+					}
+					else{
+						action = new OFActionOutput(host.getPort());
+					}
+					actions.add(action);
+					instructions = new ArrayList<OFInstruction>();
+					instruction = new OFInstructionApplyActions(actions);
+					instructions.add(instruction);
+					bufferId = action.getMaxLength();
+					SwitchCommands.installRule(sw, sw.getTables(), SwitchCommands.DEFAULT_PRIORITY, matchCriteria, instructions,
+							SwitchCommands.NO_TIMEOUT, SwitchCommands.NO_TIMEOUT, bufferId);
 				}
-			}*/
+			}
 		}
+	}
+	
+	private OFActionOutput computeBellmanFord(){
+		OFActionOutput solution = null;
+		
+		return solution;
 	}
 
 	/**
