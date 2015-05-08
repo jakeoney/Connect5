@@ -3,12 +3,12 @@ package edu.wisc.cs.sdn.apps.l3routing;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.Map.Entry;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
-import org.openflow.protocol.OFFlowMod;
 import org.openflow.protocol.OFMatch;
 import org.openflow.protocol.action.OFAction;
 import org.openflow.protocol.action.OFActionOutput;
@@ -57,7 +57,7 @@ public class L3Routing implements IFloodlightModule, IOFSwitchListener,
     
     // Map of hosts to devices
     private Map<IDevice,Host> knownHosts;
-
+    
 	/**
      * Loads dependencies and initializes data structures.
      */
@@ -88,10 +88,8 @@ public class L3Routing implements IFloodlightModule, IOFSwitchListener,
 		this.floodlightProv.addOFSwitchListener(this);
 		this.linkDiscProv.addListener(this);
 		this.deviceProv.addListener(this);
-		
 		/*********************************************************************/
-		/* TODO: Initialize variables or perform startup tasks, if necessary */
-		
+		/* TODO: Initialize variables or perform startup tasks, if necessary */		
 		/*********************************************************************/
 	}
 	
@@ -126,53 +124,16 @@ public class L3Routing implements IFloodlightModule, IOFSwitchListener,
 		if (host.getIPv4Address() != null)
 		{
 			log.info(String.format("Host %s added", host.getName()));
-			this.knownHosts.put(device, host);
 			
 			/*****************************************************************/
 			/* TODO: Update routing: add rules to route to new host          */
-			
 			/*****************************************************************/
-			IOFSwitch sw = null;
-			List<OFInstruction> instructions = null;
-			OFInstructionApplyActions instruction = null;
-			int bufferId = 0;
-			if(host.isAttachedToSwitch()){
-				sw = host.getSwitch();
-				//setting match criteria
-				OFMatch matchCriteria = new OFMatch();
-				matchCriteria.setDataLayerType(OFMatch.ETH_TYPE_IPV4);
-				matchCriteria.setNetworkDestination(host.getIPv4Address());
-
-				//creating actions for what to do
-				List<OFAction> actions = new ArrayList<OFAction>();
-				OFActionOutput action;;
-
-				//maybe sw.getTables()?
-				//SwitchCommands.installRule(sw, table, SwitchCommands.DEFAULT_PRIORITY, matchCriteria, instructions,
-				//		SwitchCommands.NO_TIMEOUT, SwitchCommands.NO_TIMEOUT, bufferId);
-				for(Entry<Long, IOFSwitch> s : this.getSwitches().entrySet()){
-					if(!(s.getValue().equals(sw))){
-						action = computeBellmanFord();
-					}
-					else{
-						action = new OFActionOutput(host.getPort());
-					}
-					actions.add(action);
-					instructions = new ArrayList<OFInstruction>();
-					instruction = new OFInstructionApplyActions(actions);
-					instructions.add(instruction);
-					bufferId = action.getMaxLength();
-					SwitchCommands.installRule(sw, sw.getTables(), SwitchCommands.DEFAULT_PRIORITY, matchCriteria, instructions,
-							SwitchCommands.NO_TIMEOUT, SwitchCommands.NO_TIMEOUT, bufferId);
-				}
-			}
+			
+			this.knownHosts.put(device, host);
+			//this.newConnectionAdded();
+			bellmanFord(host);
+			//this.installRule(host, host.getSwitch(), host.getPort());
 		}
-	}
-	
-	private OFActionOutput computeBellmanFord(){
-		OFActionOutput solution = null;
-		
-		return solution;
 	}
 
 	/**
@@ -192,7 +153,6 @@ public class L3Routing implements IFloodlightModule, IOFSwitchListener,
 		
 		/*********************************************************************/
 		/* TODO: Update routing: remove rules to route to host               */
-		
 		/*********************************************************************/
 	}
 
@@ -220,7 +180,6 @@ public class L3Routing implements IFloodlightModule, IOFSwitchListener,
 		
 		/*********************************************************************/
 		/* TODO: Update routing: change rules to route to host               */
-		
 		/*********************************************************************/
 	}
 	
@@ -236,8 +195,12 @@ public class L3Routing implements IFloodlightModule, IOFSwitchListener,
 		
 		/*********************************************************************/
 		/* TODO: Update routing: change routing rules for all hosts          */
-		
 		/*********************************************************************/
+		
+		//Vertex newSwitch = new Vertex(sw, 0);
+		//this.switches.add(newSwitch);
+		//this.newConnectionAdded();
+
 	}
 
 	/**
@@ -251,8 +214,7 @@ public class L3Routing implements IFloodlightModule, IOFSwitchListener,
 		log.info(String.format("Switch s%d removed", switchId));
 		
 		/*********************************************************************/
-		/* TODO: Update routing: change routing rules for all hosts          */
-		
+		/* TODO: Update routing: change routing rules for all hosts          */		
 		/*********************************************************************/
 	}
 
@@ -283,7 +245,6 @@ public class L3Routing implements IFloodlightModule, IOFSwitchListener,
 		
 		/*********************************************************************/
 		/* TODO: Update routing: change routing rules for all hosts          */
-		
 		/*********************************************************************/
 	}
 
@@ -391,5 +352,146 @@ public class L3Routing implements IFloodlightModule, IOFSwitchListener,
         floodlightService.add(ILinkDiscoveryService.class);
         floodlightService.add(IDeviceService.class);
         return floodlightService;
+	}
+
+	private void bellmanFord(Host srcHost) {
+		Vertex tmp;
+		List<Vertex> switches = new ArrayList<Vertex>();
+		// initially, add all switches to a switch list
+		IOFSwitch srcSw = srcHost.getSwitch();
+		
+		// initially set all costs to infinity, except for the source
+		// which is set to 0
+		for (IOFSwitch sw : this.getSwitches().values()) {
+			if (sw.equals(srcSw))
+				tmp = new Vertex(sw, 0);
+			else
+				tmp = new Vertex(sw, Integer.MAX_VALUE);
+			switches.add(tmp);
+		}
+		
+		newConnectionAdded(switches);
+		
+		// relax the weights
+		for (int i = 1; i < switches.size() - 1; i++) {
+			
+			// go through all links and recalculate costs to each destination from u
+			for (Vertex u: switches) {
+				// for each port for a given switch u, compare the weight of
+				// u to all of its neighbors. If there is a neighbor that 
+				// has a less expensive path, go through that neighbor
+				for (int port: u.getSwitch().getEnabledPortNumbers()) {
+					Vertex neighbor = u.getConected().get(port);
+					if(neighbor != null){
+						if (u.getDistance() > neighbor.getDistance() + 1) {
+							log.info(String.format("PORT is %d", port));
+							u.setDistance(neighbor.getDistance() + 1);
+							u.setOutPort(port);
+							//neighbor.setOutPort(port);
+						}
+					}
+				}
+			}
+		}
+		
+		// one iteration for srcSw is complete update these next hops into their 
+		// respective tables
+		
+		for (Vertex dstSw: switches) {
+			if (!dstSw.getSwitch().equals(srcSw)) {
+				//installRule(srcHost, dstSw.getSwitch(), dstSw.getOutPort());
+				Set<Integer> arr = dstSw.getConected().keySet();
+				Iterator<Integer> itr = arr.iterator();
+				while(itr.hasNext()){
+					log.info(String.format("dstSwitch we are checking is %s", dstSw.getSwitch().toString()));
+					log.info(String.format("nUmBeRs ArE %d", itr.next()));
+				}
+				//installRule(srcHost, dstSw.getSwitch(), dstSw.getOutPort());
+				installRule(srcHost, dstSw.getSwitch(), 2);
+			}
+			else{
+				//for srcSw
+				installRule(srcHost, srcSw, srcHost.getPort());
+			}
+		}
+	}
+	
+	private boolean installRule(Host host, IOFSwitch sw, int port){
+		List<OFInstruction> instructions = null;
+		OFInstructionApplyActions instruction = null;
+		int bufferId = 0;
+		
+		//if we are connected
+		if(host.isAttachedToSwitch()){
+			//setting match criteria
+			OFMatch matchCriteria = new OFMatch();
+			matchCriteria.setDataLayerType(OFMatch.ETH_TYPE_IPV4);
+			matchCriteria.setNetworkDestination(host.getIPv4Address());
+
+			//creating actions for what to do
+			List<OFAction> actions = new ArrayList<OFAction>();
+			OFActionOutput action;
+
+			action = new OFActionOutput(port);
+			actions.add(action);
+			instructions = new ArrayList<OFInstruction>();
+			instruction = new OFInstructionApplyActions(actions);
+			instructions.add(instruction);
+			bufferId = action.getMaxLength();
+			SwitchCommands.installRule(sw, table, SwitchCommands.DEFAULT_PRIORITY, matchCriteria, instructions,
+					SwitchCommands.NO_TIMEOUT, SwitchCommands.NO_TIMEOUT, bufferId);
+			return true;
+
+		}
+		return false;
+	}
+	
+	private void newConnectionAdded(List<Vertex> switches) {
+		boolean badCase = false;
+		for (Vertex currNode: switches) {
+			//for each enabled port on currNode
+			for (int currNodesPort: currNode.getSwitch().getEnabledPortNumbers()) {
+				for(Host h : this.getHosts()){
+					if(!((h.getSwitch().equals(currNode.getSwitch()) && (h.getPort() == currNodesPort)))){
+						badCase = true; // host is connected on that port
+					}
+				}
+				//look at all possible links for links connected to currNode's port
+				if(!badCase){
+					for (Link link: this.getLinks()) {
+						if (link.getSrc() == currNodesPort) {
+
+							//check all other potential nodes to see if they are connected
+							for (Vertex potentialNeighbor: switches) {
+								badCase = false;
+								if (potentialNeighbor.getSwitch().getEnabledPortNumbers().contains((int)link.getDst())) {
+									for(Host h : this.getHosts()){
+										if(!(h.getSwitch().equals(potentialNeighbor.getSwitch()) && (h.getPort() == link.getDst()))){
+											badCase = true; // host is connected on that port
+										}
+									}
+									if(!badCase){
+										log.info(String.format("EVER FINDING CONNECTED?"));
+										//potentialNeighbor is in fact a neighbor
+										currNode.setOutPort(currNodesPort);
+										currNode.connected(currNodesPort, potentialNeighbor);
+										//currNode.connected(currNodesPort, currNode);
+										break; //only one connection per link
+									}
+								}
+							}
+							//think i can break here too
+							//break;
+						}
+					}
+				}
+				badCase = false;
+			}
+		}	
+	}
+
+	//TODO
+	private void removeConnections(Vertex removed){
+		
 	}
 }
