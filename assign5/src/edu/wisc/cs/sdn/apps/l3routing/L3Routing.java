@@ -6,6 +6,7 @@ import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -130,9 +131,7 @@ ILinkDiscoveryListener, IDeviceListener
 			/*****************************************************************/
 
 			this.knownHosts.put(device, host);
-			//this.newConnectionAdded();
 			bellmanFord(host);
-			//this.installRule(host, host.getSwitch(), host.getPort());
 		}
 	}
 
@@ -154,6 +153,13 @@ ILinkDiscoveryListener, IDeviceListener
 		/*********************************************************************/
 		/* TODO: Update routing: remove rules to route to host               */
 		/*********************************************************************/
+		//if a host is removed, just iterate through each switch and remove that entry
+		for(Entry<Long, IOFSwitch> currSw : this.getSwitches().entrySet()){
+			OFMatch matchCriteria = new OFMatch();
+			matchCriteria.setDataLayerType(OFMatch.ETH_TYPE_IPV4);
+			matchCriteria.setNetworkDestination(host.getIPv4Address());
+			SwitchCommands.removeRules(currSw.getValue(), table, matchCriteria);
+		}
 	}
 
 	/**
@@ -183,6 +189,9 @@ ILinkDiscoveryListener, IDeviceListener
 		/*********************************************************************/
 		log.info(String.format("Host %s moved to s%d:%d", host.getName(),
 				host.getSwitch().getId(), host.getPort()));
+		
+		//adding a new entry for the given host should re-create the current entries for that host
+		bellmanFord(host);
 	}
 
 	/**
@@ -198,11 +207,11 @@ ILinkDiscoveryListener, IDeviceListener
 		/*********************************************************************/
 		/* TODO: Update routing: change routing rules for all hosts          */
 		/*********************************************************************/
-
-		//Vertex newSwitch = new Vertex(sw, 0);
-		//this.switches.add(newSwitch);
-		//this.newConnectionAdded();
-
+		
+		//if network state changes, just recalculate bellmanFord
+		for(Host host : this.getHosts()){
+			bellmanFord(host);
+		}
 	}
 
 	/**
@@ -218,6 +227,19 @@ ILinkDiscoveryListener, IDeviceListener
 		/*********************************************************************/
 		/* TODO: Update routing: change routing rules for all hosts          */		
 		/*********************************************************************/
+		for(Host host : this.getHosts()){
+			if(host.isAttachedToSwitch()){
+				bellmanFord(host);
+			}
+			else{
+				for(Entry<Long, IOFSwitch> currSw : this.getSwitches().entrySet()){
+					OFMatch matchCriteria = new OFMatch();
+					matchCriteria.setDataLayerType(OFMatch.ETH_TYPE_IPV4);
+					matchCriteria.setNetworkDestination(host.getIPv4Address());
+					SwitchCommands.removeRules(currSw.getValue(), table, matchCriteria);
+				}
+			}
+		}
 	}
 
 	/**
@@ -248,6 +270,10 @@ ILinkDiscoveryListener, IDeviceListener
 		/*********************************************************************/
 		/* TODO: Update routing: change routing rules for all hosts          */
 		/*********************************************************************/
+		//recompute the shortest path
+		for(Host host : this.getHosts()){
+			bellmanFord(host);
+		}
 	}
 
 	/**
@@ -357,63 +383,44 @@ ILinkDiscoveryListener, IDeviceListener
 	}
 
 	private void bellmanFord(Host srcHost) {
+		//not sure if this needs to be synchronized
 		synchronized(this){
 		Vertex tmp;
 		List<Vertex> switches = new ArrayList<Vertex>();
-		// initially, add all switches to a switch list
-		IOFSwitch srcSw = srcHost.getSwitch();
-		// initially set all costs to infinity, except for the source
-		// which is set to 0
+		IOFSwitch src = srcHost.getSwitch();
 		for (IOFSwitch sw : this.getSwitches().values()) {
-			if (sw.equals(srcSw))
+			if (sw.equals(src))
 				tmp = new Vertex(sw, 0);
 			else
 				tmp = new Vertex(sw, Integer.MAX_VALUE - 1);
 			switches.add(tmp);
 		}
-
+		//find neighbors
 		newConnectionAdded(switches);
 
-		// relax the weights
+		// Finding shortest paths
 		for (int i = 1; i < switches.size() - 1; i++) {
-
-			// go through all links and recalculate costs to each destination from u
-			for (Vertex u: switches) {
-				// for each port for a given switch u, compare the weight of
-				// u to all of its neighbors. If there is a neighbor that 
-				// has a less expensive path, go through that neighbor
-				for (int port: u.getSwitch().getEnabledPortNumbers()) {
-					Vertex neighbor = u.getConected().get(port);
+			for (Vertex curr: switches) {
+				for (int port: curr.getSwitch().getEnabledPortNumbers()) {
+					Vertex neighbor = curr.getConected().get(port);
 					if(neighbor != null){
-						if (u.getDistance() > neighbor.getDistance() + 1) {
-							log.info(String.format("PORT is %d", port));
-							u.setDistance(neighbor.getDistance() + 1);
-							u.setOutPort(port);
-							//neighbor.setOutPort(port);
+						if (curr.getDistance() > neighbor.getDistance() + 1) {
+							curr.setDistance(neighbor.getDistance() + 1);
+							curr.setOutPort(port);
 						}
 					}
 				}
 			}
 		}
 
-		// one iteration for srcSw is complete update these next hops into their 
-		// respective tables
-
+		//Install a rule for each switch
 		for (Vertex dstSw: switches) {
-			if (!dstSw.getSwitch().equals(srcSw)) {
-				//installRule(srcHost, dstSw.getSwitch(), dstSw.getOutPort());
-				/*Set<Integer> arr = dstSw.getConected().keySet();
-				Iterator<Integer> itr = arr.iterator();
-				while(itr.hasNext()){
-					log.info(String.format("dstSwitch we are checking is %s", dstSw.getSwitch().toString()));
-					log.info(String.format("nUmBeRs ArE %d", itr.next()));
-				}*/
+			if (!dstSw.getSwitch().equals(src)) {
 				installRule(srcHost, dstSw.getSwitch(), dstSw.getOutPort());
-				//installRule(srcHost, dstSw.getSwitch(), 2);
 			}
 			else{
 				//for srcSw
-				installRule(srcHost, srcSw, srcHost.getPort());
+				installRule(srcHost, src, srcHost.getPort());
 			}
 		}
 		}
@@ -449,27 +456,22 @@ ILinkDiscoveryListener, IDeviceListener
 		return false;
 	}
 
+	//kinda messy, but this is storing a map of all "switch neighbors" and what port they are connected to.
+	//along with what node is the outport
 	private void newConnectionAdded(List<Vertex> switches) {
 		for (Vertex currNode: switches) {
 			//for each enabled port on currNode
 			for (int currNodesPort: currNode.getSwitch().getEnabledPortNumbers()) {
 				//look at all possible links for links connected to currNode's port
 				for (Link link: this.getLinks()) {
-					
-
 					if ((link.getSrcPort() == currNodesPort) && (link.getSrc() == currNode.getSwitch().getId())) {
-						log.info(String.format("link.srcPort is %d", link.getSrcPort()));
-						log.info(String.format("link.src is %d", link.getSrc()));
-						log.info(String.format("currNode.sw is %d", currNode.getSwitch().getId()));
 						//check all other potential nodes to see if they are connected
 						for (Vertex potentialNeighbor: switches) {
 							if(!(potentialNeighbor.getSwitch().equals(currNode.getSwitch()))){
 								if ((potentialNeighbor.getSwitch().getEnabledPortNumbers().contains((int)link.getDstPort()))
 										&& link.getDst() == potentialNeighbor.getSwitch().getId()) {
-									//potentialNeighbor is in fact a neighbor
 									currNode.setOutPort(currNodesPort);
 									currNode.connected(currNodesPort, potentialNeighbor);
-									//currNode.connected(currNodesPort, currNode);
 									break; //only one connection per link
 								}
 							}
@@ -480,10 +482,5 @@ ILinkDiscoveryListener, IDeviceListener
 				}
 			}
 		}	
-	}
-
-	//TODO
-	private void removeConnections(Vertex removed){
-
 	}
 }
