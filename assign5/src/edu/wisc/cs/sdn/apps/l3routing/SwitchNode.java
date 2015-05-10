@@ -5,8 +5,8 @@ import java.util.Map;
 
 import net.floodlightcontroller.core.IOFSwitch;
 
-public class Vertex {
-	private  Map<Integer, Vertex> connected;
+public class SwitchNode {
+	private  Map<Integer, SwitchNode> connected;
 	private IOFSwitch sw;
 	private int distance;
 	private int outPort;
@@ -17,18 +17,18 @@ public class Vertex {
 		this.connected = new HashMap<Integer, Vertex>();
 	}*/
 	
-	public Vertex(IOFSwitch sw, int d) {
+	public SwitchNode(IOFSwitch sw, int d) {
 		this.sw = sw;
 		this.distance = d;
-		this.connected = new HashMap<Integer, Vertex>();
+		this.connected = new HashMap<Integer, SwitchNode>();
 	}
 	
 	//Neighbors
-	public Map<Integer, Vertex> getConected(){
+	public Map<Integer, SwitchNode> getConected(){
 		return this.connected;
 	}
 	
-	public void connected(int port, Vertex sw) {
+	public void connected(int port, SwitchNode sw) {
 		connected.put(port, sw);
 	}
 	

@@ -3,11 +3,9 @@ package edu.wisc.cs.sdn.apps.l3routing;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.openflow.protocol.OFMatch;
@@ -382,50 +380,7 @@ ILinkDiscoveryListener, IDeviceListener
 		return floodlightService;
 	}
 
-	private void bellmanFord(Host srcHost) {
-		//not sure if this needs to be synchronized
-		synchronized(this){
-		Vertex tmp;
-		List<Vertex> switches = new ArrayList<Vertex>();
-		IOFSwitch src = srcHost.getSwitch();
-		for (IOFSwitch sw : this.getSwitches().values()) {
-			if (sw.equals(src))
-				tmp = new Vertex(sw, 0);
-			else
-				tmp = new Vertex(sw, Integer.MAX_VALUE - 1);
-			switches.add(tmp);
-		}
-		//find neighbors
-		newConnectionAdded(switches);
-
-		// Finding shortest paths
-		for (int i = 1; i < switches.size() - 1; i++) {
-			for (Vertex curr: switches) {
-				for (int port: curr.getSwitch().getEnabledPortNumbers()) {
-					Vertex neighbor = curr.getConected().get(port);
-					if(neighbor != null){
-						if (curr.getDistance() > neighbor.getDistance() + 1) {
-							curr.setDistance(neighbor.getDistance() + 1);
-							curr.setOutPort(port);
-						}
-					}
-				}
-			}
-		}
-
-		//Install a rule for each switch
-		for (Vertex dstSw: switches) {
-			if (!dstSw.getSwitch().equals(src)) {
-				installRule(srcHost, dstSw.getSwitch(), dstSw.getOutPort());
-			}
-			else{
-				//for srcSw
-				installRule(srcHost, src, srcHost.getPort());
-			}
-		}
-		}
-	}
-
+	//installs a rule on a given switch to forward packet to a given host
 	private boolean installRule(Host host, IOFSwitch sw, int port){
 		List<OFInstruction> instructions = null;
 		OFInstructionApplyActions instruction = null;
@@ -455,18 +410,64 @@ ILinkDiscoveryListener, IDeviceListener
 		}
 		return false;
 	}
+	
+	//Would have programmed this different. By the time my partner put input in on this, I already had my weird way 
+	//working.
+	private void bellmanFord(Host srcHost) {
+		//not sure if this needs to be synchronized
+		synchronized(this){
+		SwitchNode tmp;
+		List<SwitchNode> switches = new ArrayList<SwitchNode>();
+		IOFSwitch src = srcHost.getSwitch();
+		for (IOFSwitch sw : this.getSwitches().values()) {
+			if (sw.equals(src))
+				tmp = new SwitchNode(sw, 0);
+			else
+				tmp = new SwitchNode(sw, Integer.MAX_VALUE - 1);
+			switches.add(tmp);
+		}
+		//find neighbors
+		newConnectionAdded(switches);
+
+		// Finding shortest paths
+		for (int i = 1; i < switches.size() - 1; i++) {
+			for (SwitchNode curr: switches) {
+				for (int port: curr.getSwitch().getEnabledPortNumbers()) {
+					SwitchNode neighbor = curr.getConected().get(port);
+					if(neighbor != null){
+						if (curr.getDistance() > neighbor.getDistance() + 1) {
+							curr.setDistance(neighbor.getDistance() + 1);
+							curr.setOutPort(port);
+						}
+					}
+				}
+			}
+		}
+
+		//Install a rule for each switch
+		for (SwitchNode dstSw: switches) {
+			if (!dstSw.getSwitch().equals(src)) {
+				installRule(srcHost, dstSw.getSwitch(), dstSw.getOutPort());
+			}
+			else{
+				//for srcSw
+				installRule(srcHost, src, srcHost.getPort());
+			}
+		}
+		}
+	}
 
 	//kinda messy, but this is storing a map of all "switch neighbors" and what port they are connected to.
 	//along with what node is the outport
-	private void newConnectionAdded(List<Vertex> switches) {
-		for (Vertex currNode: switches) {
+	private void newConnectionAdded(List<SwitchNode> switches) {
+		for (SwitchNode currNode: switches) {
 			//for each enabled port on currNode
 			for (int currNodesPort: currNode.getSwitch().getEnabledPortNumbers()) {
 				//look at all possible links for links connected to currNode's port
 				for (Link link: this.getLinks()) {
 					if ((link.getSrcPort() == currNodesPort) && (link.getSrc() == currNode.getSwitch().getId())) {
 						//check all other potential nodes to see if they are connected
-						for (Vertex potentialNeighbor: switches) {
+						for (SwitchNode potentialNeighbor: switches) {
 							if(!(potentialNeighbor.getSwitch().equals(currNode.getSwitch()))){
 								if ((potentialNeighbor.getSwitch().getEnabledPortNumbers().contains((int)link.getDstPort()))
 										&& link.getDst() == potentialNeighbor.getSwitch().getId()) {
